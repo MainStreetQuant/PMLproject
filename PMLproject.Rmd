@@ -1,0 +1,155 @@
+---
+title: "PMLproject"
+author: "Anonymous Coursera Student"
+date: "July 23, 2015"
+output: html_document
+---
+
+##Goal 
+
+To predict response "classe", given data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+
+##Model Construction 
+
+Data graciously provided by http://groupware.les.inf.puc-rio.br/har
+
+The training and test sets were previously determined and provided as givens:
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+train_given <- read.csv("pml-training.csv")
+test_given <- read.csv("pml-testing.csv")
+```
+
+Upon ingest, I find that 'training_given' is 19,622 observations, and 'test_given' is merely 20 observations. As such, I conclude that 'test_given' is, in fact, a set of 20 test cases that will be used at the very end of this exercise...not a test set intended for use in the creation of a supervised machine learning model. 
+
+For this purpose, I will use a traditional 60/40 partition split on 'train_given' to produce both 'train_model' and 'test_model', but only after first tidying 'train_given' for data quality:
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+#data cleaning:
+#
+library(plyr) #when plyr and dplyr are used together, load plyr first
+library(dplyr)  #load dplyr package
+train_given <- tbl_df(train_given)  #create data table for examination and easy handling
+#count how many cells in each column contain something other than NA or an emptiness
+find_empty_cols <- apply(train_given, 2, function(x) sum(x %in% c(NA, "")))  
+purge_cols <- which(find_empty_cols == 0) #determine those columns that contain nothing substantive
+train_given_purged <- train_given[,purge_cols] #drop useless columns
+train_tidy <-train_given_purged[,8:60] #drop first 7 substantive columns (none contain predictor information)
+#
+#partitioning:
+#
+library(caret) #load caret package
+set.seed(44) #set seed for reproducible psuedorandom number generation
+partition <- createDataPartition(y=train_tidy$classe, p=0.6, list=FALSE) #randomly assign 60/40 split
+train_model <- train_tidy[partition,] #make the 60% portion the model training set
+test_model <- train_tidy[-partition,] #make the 40% portion (remainder) the model test set
+```
+
+
+A quick examination shows that 'train_model' is now 11,776 observations, and 'test_model' is now 7,846. This is indeed an approximate 60/40 split of our original 19,622 observations.
+
+I then develop two independent models for comparison, a random forest & a boosted regression:
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+#random forest
+library(randomForest)
+set.seed(44)
+RF <- randomForest(classe~., data = train_model)
+RFpred <- predict(RF, train_model)
+RFCM <- confusionMatrix(train_model$classe, RFpred)
+RFKappa <- RFCM$overall[2]
+RFKappa
+
+#
+#boosted regression
+#
+library(gbm)
+set.seed(44)
+GBM <- train(classe~., method="gbm", data=train_model, verbose=FALSE, keep.data=TRUE)
+GBMpred <- predict(GBM, train_model)
+GBMCM <- confusionMatrix(train_model$classe, GBMpred)
+GBMKappa <- GBMCM$overall[2]
+GBMKappa
+```
+
+
+Early indications are that the random forest is the superior predictive model. Furthermore, the boosted regression, while still performing in an excellent fashion, took much more time and computing resource.
+
+However, these promising results do not eliminate the need for cross-validation, as they may well be "too-good-to-be-true" (overfitted).
+
+##Cross Validation 
+
+To cross-validate, I use the holdout remainder from the 40% partition split, 'test_model':
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+#test random forest
+#
+set.seed(44)
+RFtestpred <- predict(RF, test_model)
+RFtestCM <- confusionMatrix(test_model$classe, RFtestpred)
+RFtestKappa <- RFtestCM$overall[2]
+RFtestKappa
+
+
+
+#
+#test boosted regression
+#
+set.seed(44)
+GBMtestpred <- predict(GBM, test_model)
+GBMtestCM <- confusionMatrix(test_model$classe, GBMtestpred)
+GBMtestKappa <- GBMtestCM$overall[2]
+GBMtestKappa
+```
+
+As expected, performance drops off for both models, but not by much. Still, the boosted regression falls further. 
+
+Accordingly, I select the random forest to proceed.
+
+The relative importance of each variable in the random forest model is as follows:
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+RFI <- as.data.frame(RF$importance)
+RFI
+```
+
+
+##Sample Error 
+
+As simple observed accuracy can prove overly optimistic in multiple class cases, and as overfitting can lead to performance drop-off on the cross-validation, I look to the Kappa statistic on the smaller 40% test partition split to calculate the "out of" (a.k.a. generalization) sample error. 
+
+As such, I expect the model to inaccurately predict at a rate of once out of this many tries:
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+Outof <- 1/(1-RFtestKappa)
+as.numeric(Outof)
+```
+
+##Design Choices 
+
+I chose to benchmark a random forest and a boosted regression against each other because both were covered in the lessons for week 3, and if one can afford the time and resources, reliance upon a single model should be avoided.
+
+
+##Test Cases 
+
+Finally, I generate predictions for the 20 provided test cases in the original "test_given" holdout set. 
+
+Submission to the auto-grader revealed all 20 of these predictions to be correct:
+
+```{r warning=FALSE,error=FALSE,message=FALSE}
+#data cleaning:
+#
+test_given <- tbl_df(test_given)  #create data table for examination and easy handling
+#count how many cells in each column contain something other than NA or an emptiness
+find_empty_cols <- apply(test_given, 2, function(x) sum(x %in% c(NA, "")))  
+purge_cols <- which(find_empty_cols == 0) #determine those columns that contain nothing substantive
+test_given_purged <- test_given[,purge_cols] #drop useless columns
+test_tidy <-test_given_purged[,8:60] #drop first 7 substantive columns (none contain predictor information)
+#
+#prediction via random forest:
+#
+set.seed(44)
+RFfinalpred <- predict(RF, test_tidy)
+RFfinalpred
+```
